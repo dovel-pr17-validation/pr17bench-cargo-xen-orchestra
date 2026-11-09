@@ -1,0 +1,107 @@
+<template>
+  <VtsContentSidePanel class="snapshots">
+    <div>
+      <VtsColumns extra-space-around>
+        <VtsColumn>
+          <VmSnapshotCard :snapshot="lastSnapshot" :title="t('last-snapshot')" />
+        </VtsColumn>
+        <VtsColumn>
+          <VmSnapshotCard :snapshot="lastRevertSnapshot" :title="t('last-revert')" />
+        </VtsColumn>
+      </VtsColumns>
+      <UiCard class="container">
+        <SnapshotsTable :snapshots :vm />
+      </UiCard>
+    </div>
+    <SnapshotSidePanel :snapshot="selectedSnapshot" @close="selectedSnapshot = undefined" />
+  </VtsContentSidePanel>
+</template>
+
+<script setup lang="ts">
+import SnapshotSidePanel from '@/modules/snapshot/components/list/panel/SnapshotSidePanel.vue'
+import SnapshotsTable from '@/modules/snapshot/components/list/SnapshotsTable.vue'
+import {
+  type FrontXoVmSnapshot,
+  useXoVmSnapshotCollection,
+} from '@/modules/snapshot/components/remote-resources/use-xo-vm-snapshot-collection.ts'
+import VmSnapshotCard from '@/modules/vm/components/snapshot/cards/VmSnapshotCard.vue'
+import type { FrontXoVm } from '@/modules/vm/remote-resources/use-xo-vm-collection.ts'
+import VtsColumn from '@core/components/column/VtsColumn.vue'
+import VtsColumns from '@core/components/columns/VtsColumns.vue'
+import VtsContentSidePanel from '@core/components/layout/VtsContentSidePanel.vue'
+import UiCard from '@core/components/ui/card/UiCard.vue'
+import { useRouteQuery } from '@core/composables/route-query.composable.ts'
+import { useArrayFilter } from '@vueuse/shared'
+import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
+
+const { vm } = defineProps<{
+  vm: FrontXoVm
+}>()
+
+const { snapshots: snapshotsCollection, getSnapshotById } = useXoVmSnapshotCollection()
+
+const { t } = useI18n()
+
+const snapshots = useArrayFilter(snapshotsCollection, snapshot => snapshot.$snapshot_of === vm.id)
+
+const selectedSnapshot = useRouteQuery<FrontXoVmSnapshot | undefined>('id', {
+  toData: id => getSnapshotById(id as FrontXoVmSnapshot['id']),
+  toQuery: snapshot => snapshot?.id ?? '',
+})
+
+const lastSnapshot = computed(() => {
+  if (snapshots.value.length === 0) {
+    return undefined
+  }
+
+  return snapshots.value.reduce((latest, current) => {
+    return current.snapshot_time > latest.snapshot_time ? current : latest
+  })
+})
+
+const lastRevertSnapshot = computed(() => {
+  if (snapshots.value.length === 0 || !vm.parent) {
+    return undefined
+  }
+
+  return snapshots.value.find(snapshot => snapshot.id === vm.parent)
+})
+</script>
+
+<style scoped lang="postcss">
+.snapshots {
+  .container {
+    height: fit-content;
+    margin: 0.8rem;
+    gap: 4rem;
+  }
+
+  .row {
+    display: grid;
+    gap: 0.8rem;
+    margin: 0.8rem;
+    grid-template-columns: repeat(2, minmax(20rem, 1fr));
+    grid-template-areas: 'last-snapshot last-revert';
+  }
+
+  .last-snapshot {
+    grid-area: last-snapshot;
+  }
+
+  .last-revert {
+    grid-area: last-revert;
+  }
+
+  &.mobile {
+    display: flex;
+    flex-direction: column;
+    gap: 0.8rem;
+
+    .row {
+      display: flex;
+      flex-direction: column;
+    }
+  }
+}
+</style>

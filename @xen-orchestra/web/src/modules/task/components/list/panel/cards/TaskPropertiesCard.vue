@@ -1,0 +1,55 @@
+<template>
+  <UiPanelCard class="task-properties-card">
+    <UiPanelCardTitle size="medium" :label="t('properties')" />
+    <div class="content">
+      <VtsRecursiveFields :fields="propertiesOtherWithoutCloudConfig" />
+    </div>
+    <UiLogEntryViewer
+      v-if="cloudConfig !== undefined"
+      :content="cloudConfig"
+      :label="t('cloud-config')"
+      size="small"
+      accent="info"
+    />
+    <UiLogEntryViewer :content="properties.other" :label="t('other-properties')" size="small" accent="info" />
+  </UiPanelCard>
+</template>
+
+<script lang="ts" setup>
+import { useXoTaskPropertiesUtils } from '@/modules/task/composables/xo-task-properties-utils.composable.ts'
+import type { FrontXoTask } from '@/modules/task/remote-resources/use-xo-task-collection.ts'
+import VtsRecursiveFields from '@core/components/recursive-fields/VtsRecursiveFields.vue'
+import UiLogEntryViewer from '@core/components/ui/log-entry-viewer/UiLogEntryViewer.vue'
+import UiPanelCard from '@core/components/ui/panel-card/UiPanelCard.vue'
+import UiPanelCardTitle from '@core/components/ui/panel-card-title/UiPanelCardTitle.vue'
+import { omit } from 'lodash-es'
+import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
+
+const { task } = defineProps<{
+  task: FrontXoTask
+}>()
+
+const { t } = useI18n()
+
+const { properties } = useXoTaskPropertiesUtils(() => task)
+
+const cloudConfig = computed(() => {
+  const args = properties.value.other?.args as { cloud_config?: string } | undefined
+  return args?.cloud_config
+})
+
+const propertiesOtherWithoutCloudConfig = computed(() =>
+  properties.value.other?.args ? omit(properties.value.other.args, 'cloud_config') : undefined
+)
+</script>
+
+<style scoped lang="postcss">
+.task-properties-card {
+  .content {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+}
+</style>

@@ -1,0 +1,210 @@
+import { slash } from '@core/icons/custom-icons.ts'
+import { defineIconPack, type IconSingleConfig } from '@core/packages/icon'
+import { faCopy, faSquare as checkboxEmpty, type IconDefinition } from '@fortawesome/free-regular-svg-icons'
+import {
+  faAdd,
+  faArrowCircleRight,
+  faArrowDownLong,
+  faArrowRight,
+  faArrowRotateLeft,
+  faArrowRotateRight,
+  faArrowUpLong,
+  faArrowUpRightFromSquare,
+  faBan,
+  faBars,
+  faBolt,
+  faCamera,
+  faCircle,
+  faClone,
+  faClose,
+  faDownload,
+  faEdit,
+  faEllipsis,
+  faEraser,
+  faFillDrip,
+  faHeart,
+  faLightbulb,
+  faLink,
+  faLinkSlash,
+  faMinus,
+  faPlug,
+  faPowerOff,
+  faRefresh,
+  faRoute,
+  faSearch,
+  faSquare,
+  faStarOfLife,
+  faThumbTack,
+  faThumbTackSlash,
+  faTrash,
+  faUpDown,
+  faUpRightAndDownLeftFromCenter,
+} from '@fortawesome/free-solid-svg-icons'
+
+function constructIcon(icon: IconDefinition): IconSingleConfig {
+  return {
+    icon,
+    color: 'currentColor',
+  }
+}
+
+function constructBadgedIcon(icon: IconDefinition, badge: IconDefinition): IconSingleConfig[] {
+  return [
+    constructIcon(icon),
+    {
+      icon: faCircle,
+      color: 'var(--color-neutral-background-primary)',
+      translate: [7, 5.5],
+      size: 13,
+    },
+    {
+      icon: faCircle,
+      color: 'currentColor',
+      translate: [7, 5.5],
+      size: 10,
+    },
+    {
+      icon: badge,
+      color: 'var(--color-neutral-background-primary)',
+      translate: [7, 5.5],
+      size: 6,
+    },
+  ]
+}
+
+export const actionIcons = defineIconPack({
+  menu: constructIcon(faBars),
+  'pin-panel': constructIcon(faThumbTack),
+  'pin-panel-hide': constructIcon(faThumbTackSlash),
+  resize: [
+    {
+      icon: faUpDown,
+      color: 'var(--color-neutral-txt-primary)',
+      rotate: 90,
+    },
+    {
+      icon: faMinus,
+      color: 'var(--color-neutral-txt-primary)',
+      rotate: 90,
+    },
+  ],
+  search: constructIcon(faSearch),
+  'close-cancel-clear': constructIcon(faClose),
+  disable: constructIcon(faBan),
+  'disable-and-evacuate': constructBadgedIcon(faBan, faArrowRight),
+  add: constructIcon(faAdd),
+  'add-circle': [
+    {
+      icon: faCircle,
+      color: 'var(--color-brand-item-base)',
+    },
+    {
+      icon: faAdd,
+      color: 'var(--color-brand-txt-item)',
+      size: 10,
+    },
+  ],
+  remove: constructIcon(faMinus),
+  force: constructIcon(faBolt),
+  smart: constructIcon(faLightbulb),
+  'open-in-new-tab': constructIcon(faArrowUpRightFromSquare),
+  'open-fullscreen': constructIcon(faUpRightAndDownLeftFromCenter),
+  screenshot: [
+    // faDrawSquare is pro version
+    constructIcon(checkboxEmpty),
+    {
+      icon: faCircle,
+      color: 'var(--color-neutral-txt-primary)',
+      size: 4,
+      translate: [6, 6],
+    },
+    {
+      icon: faCircle,
+      color: 'var(--color-neutral-txt-primary)',
+      size: 4,
+      translate: [-6, -6],
+    },
+    {
+      icon: faCircle,
+      color: 'var(--color-neutral-txt-primary)',
+      size: 4,
+      translate: [6, -6],
+    },
+    {
+      icon: faCircle,
+      color: 'var(--color-neutral-txt-primary)',
+      size: 4,
+      translate: [-6, 6],
+    },
+  ],
+  edit: constructIcon(faEdit),
+  fill: constructIcon(faFillDrip),
+  duplicate: constructIcon(faClone),
+  copy: constructIcon(faCopy),
+  attach: constructIcon(faLink),
+  detach: constructIcon(faLinkSlash),
+  connect: constructIcon(faPlug),
+  disconnect: [constructIcon(faPlug), { icon: slash }],
+  forget: constructIcon(faEraser),
+  delete: { icon: faTrash, color: 'var(--color-danger-txt-primary)' },
+  'more-actions': constructIcon(faEllipsis),
+  'more-actions-vertical': {
+    icon: faEllipsis,
+    color: 'var(--color-neutral-txt-primary)',
+    rotate: 90,
+  },
+  'import-export': [
+    {
+      icon: faArrowUpLong,
+      color: 'var(--color-neutral-txt-primary)',
+      translate: [-5, 0],
+    },
+    {
+      icon: faArrowDownLong,
+      color: 'var(--color-neutral-txt-primary)',
+      translate: [5, 0],
+    },
+  ],
+  reboot: constructIcon(faArrowRotateRight),
+  'force-reboot': constructBadgedIcon(faArrowRotateRight, faBolt),
+  shutdown: constructIcon(faSquare),
+  'force-shutdown': constructBadgedIcon(faSquare, faBolt),
+  'smart-reboot': [
+    constructIcon(faArrowRotateRight),
+    {
+      icon: faCircle,
+      color: 'var(--color-neutral-background-primary)',
+      translate: [7, 5.5],
+      size: 13,
+    },
+    {
+      icon: faLightbulb,
+      color: 'var(--color-neutral-txt-primary)',
+      translate: [7, 5.5],
+      size: 10,
+    },
+  ],
+  undo: constructIcon(faArrowRotateLeft),
+  scan: constructIcon(faRefresh),
+  'change-state': constructIcon(faPowerOff),
+  migrate: constructIcon(faRoute),
+  snapshot: constructIcon(faCamera),
+  download: constructIcon(faDownload),
+  'health-check': constructIcon(faHeart),
+  evacuate: constructIcon(faArrowCircleRight),
+  'emergency-shutdown': [
+    constructIcon(faSquare),
+    {
+      icon: faCircle,
+      color: 'var(--color-neutral-background-primary)',
+      translate: [7, 5.5],
+      size: 13,
+    },
+    {
+      icon: faStarOfLife,
+      color: 'currentColor',
+      translate: [7, 5.5],
+      size: 10,
+    },
+  ],
+})

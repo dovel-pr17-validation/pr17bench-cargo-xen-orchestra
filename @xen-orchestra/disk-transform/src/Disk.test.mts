@@ -1,0 +1,62 @@
+import { afterEach, beforeEach, test } from 'node:test'
+import assert from 'node:assert'
+import { DebugDisk } from './utils/DebugDisk.mjs'
+
+test('Disk class', async t => {
+  const blockSize = 1024
+  const nbBlocks = 20
+  let disk: DebugDisk
+  beforeEach(async () => {
+    disk = new DebugDisk({ nbBlocks, blockSize, fillRate: 0 })
+
+    await disk.init()
+  })
+  afterEach(async () => {
+    await disk.close()
+  })
+  await t.test('getVirtualSize', () => {
+    assert.strictEqual(disk.getVirtualSize(), blockSize * nbBlocks)
+  })
+
+  await t.test('getBlockSize', () => {
+    assert.strictEqual(disk.getBlockSize(), blockSize)
+  })
+
+  await t.test('diskBlocks generator', async () => {
+    const keys = [4, 15]
+    for (const key of keys) {
+      disk.blocks[key] = true
+    }
+    const foundKeys = []
+    const generator = disk.diskBlocks()
+    for await (const block of generator) {
+      foundKeys.push(block.index)
+      assert.strictEqual(block.data.length, blockSize)
+    }
+    assert.strictEqual(disk.getNbGeneratedBlock(), 2)
+
+    keys.sort()
+    foundKeys.sort()
+    assert.deepStrictEqual(keys, foundKeys)
+  })
+
+  await t.test('diskBlocks calls progressHandler.done when consumer exits early', async () => {
+    let doneCalled = false
+    disk.addProgressHandler({
+      setProgress: async () => {},
+      done: async () => {
+        doneCalled = true
+      },
+    })
+    disk.blocks[4] = true
+    disk.blocks[5] = true
+    disk.blocks[6] = true
+
+    // break after the first block — the inner generator's finally must still run
+    for await (const _ of disk.diskBlocks()) {
+      break
+    }
+
+    assert.strictEqual(doneCalled, true)
+  })
+})

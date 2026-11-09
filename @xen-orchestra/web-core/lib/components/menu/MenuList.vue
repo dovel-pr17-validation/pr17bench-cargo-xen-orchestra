@@ -1,0 +1,106 @@
+<!-- v1.0 -->
+<template>
+  <slot :is-open="isOpen" :open="open" name="trigger" />
+  <Teleport :disabled="!hasTrigger" to="body">
+    <ul
+      v-if="!hasTrigger || isOpen"
+      ref="menu"
+      :class="{ horizontal, border: !noBorder }"
+      class="menu-list"
+      v-bind="$attrs"
+    >
+      <slot />
+    </ul>
+  </Teleport>
+</template>
+
+<script lang="ts" setup>
+import { useDisabled } from '@core/composables/disabled.composable.ts'
+import { IK_CLOSE_MENU, IK_MENU_HORIZONTAL, IK_MENU_TELEPORTED } from '@core/utils/injection-keys.util.ts'
+import { onClickOutside, unrefElement, whenever } from '@vueuse/core'
+import placementJs, { type Options } from 'placement.js'
+import { computed, inject, nextTick, provide, ref, useSlots } from 'vue'
+
+defineOptions({
+  inheritAttrs: false,
+})
+
+const props = defineProps<{
+  horizontal?: boolean
+  noBorder?: boolean
+  disabled?: boolean
+  placement?: Options['placement']
+}>()
+
+const slots = useSlots()
+const isOpen = ref(false)
+const menu = ref()
+const isParentHorizontal = inject(
+  IK_MENU_HORIZONTAL,
+  computed(() => false)
+)
+provide(
+  IK_MENU_HORIZONTAL,
+  computed(() => props.horizontal ?? false)
+)
+
+useDisabled(() => props.disabled)
+
+let clearClickOutsideEvent: (() => void) | undefined
+
+const hasTrigger = useSlots().trigger !== undefined
+
+if (hasTrigger) {
+  provide(IK_MENU_TELEPORTED, true)
+}
+
+whenever(
+  () => !isOpen.value,
+  () => clearClickOutsideEvent?.()
+)
+if (slots.trigger && inject(IK_CLOSE_MENU, undefined) === undefined) {
+  provide(IK_CLOSE_MENU, () => (isOpen.value = false))
+}
+
+const open = (event: MouseEvent) => {
+  if (isOpen.value) {
+    return (isOpen.value = false)
+  }
+
+  isOpen.value = true
+
+  const trigger = event.currentTarget as HTMLElement
+
+  nextTick(() => {
+    clearClickOutsideEvent = onClickOutside(menu, () => (isOpen.value = false), {
+      ignore: () => [trigger, '.menu-list'],
+      controls: false,
+    })
+
+    placementJs(trigger, unrefElement(menu), {
+      placement: props.placement ?? (isParentHorizontal.value ? 'bottom-start' : 'right-start'),
+    })
+  })
+}
+</script>
+
+<style lang="postcss" scoped>
+.menu-list {
+  display: inline-flex;
+  flex-direction: column;
+  cursor: default;
+  color: var(--color-neutral-txt-primary);
+  border-radius: 0.4rem;
+  background-color: var(--color-neutral-background-primary);
+  z-index: 1011;
+  overflow: auto;
+
+  &.horizontal {
+    flex-direction: row;
+  }
+
+  &.border {
+    border: 0.1rem solid var(--color-neutral-border);
+  }
+}
+</style>

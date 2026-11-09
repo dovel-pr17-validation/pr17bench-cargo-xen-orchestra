@@ -1,0 +1,11 @@
+# Ignore Handlebars files because partials are not currently supported
+# https://github.com/prettier/prettier/issues/11834
+**/*.hbs
+
+# Generated files
+/@xen-orchestra/web/src/route-map.d.ts
+/@xen-orchestra/lite/src/route-map.d.ts
+
+# Docusaurus MDX content: prettier's markdown parser corrupts JSX
+# comments ({/* … */} becomes {/_ … _/}) and other MDX constructs
+/docs/docs/**/*.md

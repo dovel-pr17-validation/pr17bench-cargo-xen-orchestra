@@ -1,0 +1,536 @@
+import {
+  type THandleDelete,
+  type THandlePost,
+  type THandleWatching,
+  useSseStore,
+} from '@core/packages/remote-resource/sse.store.ts'
+import type { ResourceContext, UseRemoteResource } from '@core/packages/remote-resource/types.ts'
+import type { VoidFunction } from '@core/types/utility.type.ts'
+import { noop, useDebounceFn, useTimeoutPoll } from '@vueuse/core'
+import { merge, remove } from 'lodash-es'
+import readNDJSONStream from 'ndjson-readablestream'
+import {
+  computed,
+  type ComputedRef,
+  type EffectScope,
+  effectScope,
+  getCurrentScope,
+  type MaybeRef,
+  type MaybeRefOrGetter,
+  onScopeDispose,
+  reactive,
+  type Ref,
+  ref,
+  shallowReactive,
+  shallowRef,
+  toRef,
+  toValue,
+  watch,
+} from 'vue'
+
+const DEFAULT_CACHE_EXPIRATION_MS = 10_000
+
+const DEFAULT_POLLING_INTERVAL_MS = 30_000
+
+export function defineRemoteResource<
+  TData,
+  TState extends object = { data: Ref<TData> },
+  TArgs extends any[] = [],
+>(config: {
+  url: string | ((...args: TArgs) => string)
+  initialData: () => TData
+  state?: (data: Ref<NoInfer<TData>>, context: ResourceContext<TArgs>) => TState
+  onDataReceived?: (
+    data: Ref<NoInfer<TData>>,
+    receivedData: any,
+    calledFrom: 'execute' | 'update',
+    context?: ResourceContext<TArgs>
+  ) => Promise<void>
+  cacheExpirationMs?: number | false
+  pollingIntervalMs?: number | false
+  stream?: boolean
+}): UseRemoteResource<TState, TArgs>
+
+export function defineRemoteResource<TData, TState extends object, TArgs extends any[] = []>(config: {
+  url: string | ((...args: TArgs) => string)
+  state?: (data: Ref<TData | undefined>, context: ResourceContext<TArgs>) => TState
+  onDataReceived?: (
+    data: Ref<TData | undefined>,
+    receivedData: any,
+    calledFrom: 'execute' | 'update',
+    context?: ResourceContext<TArgs>
+  ) => Promise<void>
+  cacheExpirationMs?: number | false
+  pollingIntervalMs?: number | false
+  stream?: boolean
+}): UseRemoteResource<TState, TArgs>
+
+export function defineRemoteResource<
+  TData,
+  TState extends object = { data: Ref<TData> },
+  TArgs extends any[] = [],
+>(config: {
+  url: string | ((...args: TArgs) => string)
+  initialData: () => TData
+  state?: (data: Ref<NoInfer<TData>>, context: ResourceContext<TArgs>) => TState
+  onDataReceived?: (
+    data: Ref<NoInfer<TData>>,
+    receivedData: any,
+    calledFrom: 'execute' | 'update',
+    context?: ResourceContext<TArgs>
+  ) => Promise<void>
+  onDataRemoved?: (data: Ref<NoInfer<TData>>, receivedData: any) => Promise<void>
+  stream?: boolean
+  initWatchCollection: () => {
+    collectionId: string
+    resource: string // reactivity only on XAPI XO record for now
+    getIdentifier: (obj: unknown) => string
+    handleDelete: THandleDelete
+    handlePost: THandlePost
+    handleWatching: THandleWatching
+    predicate?: (receivedData: TData, context: ResourceContext<TArgs> | undefined) => Promise<boolean> | boolean
+  }
+}): UseRemoteResource<TState, TArgs>
+
+export function defineRemoteResource<
+  TData,
+  TState extends object = { data: Ref<TData> },
+  TArgs extends any[] = [],
+>(config: {
+  url: string | ((...args: TArgs) => string)
+  initialData?: () => TData
+  state?: (data: Ref<TData>, context: ResourceContext<TArgs>) => TState
+  onDataReceived?: (
+    data: Ref<NoInfer<TData>>,
+    receivedData: any,
+    calledFrom: 'execute' | 'update',
+    context?: ResourceContext<TArgs>
+  ) => Promise<void>
+  onDataRemoved?: (data: Ref<NoInfer<TData>>, receivedData: any) => Promise<void>
+  cacheExpirationMs?: number | false
+  pollingIntervalMs?: number | false
+  stream?: boolean
+  initWatchCollection?: () => {
+    collectionId: string
+    resource: string // reactivity only on XAPI XO record for now
+    getIdentifier: (obj: unknown) => string
+    handleDelete: THandleDelete
+    handlePost: THandlePost
+    handleWatching: THandleWatching
+    predicate?: (receivedData: TData, context: ResourceContext<TArgs> | undefined) => Promise<boolean> | boolean
+  }
+}) {
+  type EventBuffer<TData> = { events: ['update' | 'remove', TData][]; isProcessed: boolean }
+
+  type CacheEntry = {
+    count: number
+    evictionTimeout?: NodeJS.Timeout // TODO : Fixme , the actual type in browser is number, but NodeJS.Timeout in nodejs.
+    // Due to transitive types of vates/types, the type is NodeJS.Timeout.
+    pause: VoidFunction
+    resume: VoidFunction
+    execute: () => Promise<void>
+    isPaused: boolean
+    state: object
+    stateScope: EffectScope
+    isReady: Ref<boolean>
+    isFetching: Ref<boolean>
+    lastError: Ref<Error | undefined>
+    hasError: ComputedRef<boolean>
+  }
+
+  const cache = shallowReactive(new Map<string, CacheEntry>())
+
+  const buildUrl = typeof config.url === 'string' ? () => config.url as string : config.url
+
+  const buildData = config.initialData ?? (() => undefined as TData | undefined)
+
+  const buildState = config.state ?? ((data: Ref<TData>) => ({ data }))
+
+  const cacheExpiration =
+    config.cacheExpirationMs === false ? 0 : (config.cacheExpirationMs ?? DEFAULT_CACHE_EXPIRATION_MS)
+
+  const pollingInterval = config.pollingIntervalMs ?? DEFAULT_POLLING_INTERVAL_MS
+
+  const watchCollection = config.initWatchCollection?.()
+
+  const removeData = (data: TData[], dataToRemove: any) => {
+    const getIdentifier = watchCollection?.getIdentifier ?? JSON.stringify
+
+    remove(data, item => {
+      if (typeof item === 'object') {
+        return getIdentifier(item) === getIdentifier(dataToRemove)
+      }
+
+      return item === dataToRemove
+    })
+  }
+
+  const onDataReceived =
+    config.onDataReceived ??
+    (async (
+      data: Ref<TData>,
+      receivedData: any,
+      calledFrom: 'execute' | 'update',
+      context?: ResourceContext<TArgs>,
+      buffer?: EventBuffer<TData>
+    ) => {
+      // allow to ignore some update (like for sub collection. E.g. vms/:id/vdis)
+      if ((await watchCollection?.predicate?.(receivedData, context)) === false) {
+        // on update, the object may no longer belong to this (sub-)collection (e.g. VM removed from a backup job)
+        if (calledFrom === 'update' && Array.isArray(data.value) && !Array.isArray(receivedData)) {
+          if (buffer !== undefined && !buffer.isProcessed) {
+            buffer.events.push(['remove', receivedData])
+          } else {
+            removeData(data.value, receivedData)
+          }
+        }
+        return
+      }
+
+      if (!Array.isArray(data.value)) {
+        if (data.value === undefined) {
+          data.value = receivedData
+        } else {
+          merge(data.value, receivedData)
+        }
+
+        return
+      }
+
+      const store = data.value as TData[]
+
+      if (Array.isArray(receivedData)) {
+        data.value = receivedData as TData
+
+        return
+      }
+
+      if (calledFrom === 'execute') {
+        store.push(receivedData)
+      } else if (buffer !== undefined && !buffer.isProcessed) {
+        buffer.events.push(['update', receivedData])
+      } else {
+        removeData(store, receivedData)
+        store.push(receivedData)
+      }
+    })
+
+  const onDataRemoved =
+    config.onDataRemoved ??
+    (async (data: Ref<TData>, receivedData: any, context?: ResourceContext<TArgs>, buffer?: EventBuffer<TData>) => {
+      // allow to ignore some update (like for sub collection. E.g. vms/:id/vdis)
+      if ((await watchCollection?.predicate?.(receivedData, context)) === false) {
+        return
+      }
+
+      // for now only support `onDataRemoved` when watching XapiXoRecord collection
+      if (Array.isArray(data.value) && !Array.isArray(receivedData)) {
+        if (buffer !== undefined && !buffer.isProcessed) {
+          buffer.events.push(['remove', receivedData])
+        } else {
+          removeData(data.value, receivedData)
+        }
+        return
+      }
+
+      console.warn('onDataRemoved received but unhandled for:', receivedData)
+    })
+
+  function subscribeToUrl(url: string) {
+    const entry = cache.get(url)
+
+    if (!entry) {
+      return
+    }
+
+    entry.count += 1
+
+    if (entry.count === 1) {
+      clearTimeout(entry.evictionTimeout)
+      entry.evictionTimeout = undefined
+      if (entry.isPaused) {
+        entry.resume()
+        entry.isPaused = false
+      }
+    }
+  }
+
+  function unsubscribeFromUrl(url: string) {
+    const entry = cache.get(url)
+
+    if (!entry) {
+      return
+    }
+
+    entry.count -= 1
+
+    if (entry.count > 0) {
+      return
+    }
+
+    scheduleEviction(url, entry)
+  }
+
+  function scheduleEviction(url: string, entry: CacheEntry) {
+    entry.evictionTimeout = setTimeout(() => {
+      entry.pause()
+      entry.isPaused = true
+      entry.stateScope.stop()
+      cache.delete(url)
+    }, cacheExpiration)
+  }
+
+  function registerUrl(url: string, context: ResourceContext<TArgs>) {
+    if (cache.has(url)) {
+      return
+    }
+
+    const isReady = ref(false)
+
+    const isFetching = ref(false)
+
+    const lastError = ref<Error>()
+
+    const hasError = computed(() => lastError.value !== undefined)
+    const stateScope = effectScope(true)
+    const sharedContext = { ...context, scope: stateScope }
+    const buffer: EventBuffer<TData> = { events: [], isProcessed: false }
+    const data = shallowRef(buildData()) as Ref<TData>
+
+    // create a new JS reference to ensure vueJS detect the change, even when
+    // the value is only compared by identity (e.g. a component prop)
+    const flushData = useDebounceFn(
+      () => {
+        if (Array.isArray(data.value)) {
+          data.value = data.value.slice() as TData
+        } else if (data.value != null) {
+          data.value = { ...data.value }
+        }
+      },
+      100,
+      { maxWait: 500 }
+    )
+
+    function handleBuffer(data: Ref<TData[]>) {
+      if (buffer.isProcessed) {
+        console.warn(`buffer already handled for: ${url}`)
+        return
+      }
+      while (buffer.events.length > 0) {
+        const bufferedEvent = buffer.events.shift()
+        if (bufferedEvent === undefined) {
+          continue
+        }
+
+        const type = bufferedEvent[0]
+        const event = bufferedEvent[1]
+
+        removeData(data.value, event)
+        if (type !== 'remove') {
+          data.value.push(event)
+        }
+      }
+
+      buffer.isProcessed = true
+    }
+
+    async function execute() {
+      buffer.isProcessed = false
+      try {
+        isFetching.value = true
+
+        const response = await fetch(url)
+
+        if (!response.ok) {
+          lastError.value = Error(`Failed to fetch: ${response.statusText}`)
+          return
+        }
+
+        if (!response.body) {
+          return
+        }
+
+        if (config.stream) {
+          if (Array.isArray(data.value)) {
+            data.value = [] as TData
+          }
+
+          for await (const event of readNDJSONStream(response.body)) {
+            await onDataReceived(data, event, 'execute', sharedContext)
+            void flushData()
+          }
+        } else {
+          await onDataReceived(data, await response.json(), 'execute', sharedContext)
+          void flushData()
+        }
+
+        isReady.value = true
+        lastError.value = undefined
+      } catch (error) {
+        lastError.value = error instanceof Error ? error : new Error(String(error))
+      } finally {
+        if (watchCollection !== undefined && Array.isArray(data.value)) {
+          handleBuffer(data as Ref<TData[]>)
+          void flushData()
+        }
+
+        isFetching.value = false
+      }
+    }
+
+    let pause: VoidFunction = noop
+    let resume: VoidFunction = execute
+
+    if (watchCollection !== undefined) {
+      const { resource, handleDelete, handlePost, handleWatching } = watchCollection
+      const collectionId = `${watchCollection.collectionId}:${url}`
+      const { watch, unwatch } = useSseStore()
+
+      pause = () => unwatch({ collectionId, resource, handleDelete })
+      resume = async function () {
+        await watch({
+          collectionId,
+          handleWatching,
+          handlePost,
+          resource,
+          onDataReceived: async receivedData => {
+            await onDataReceived(data, receivedData, 'update', sharedContext, buffer)
+            void flushData()
+          },
+          onDataRemoved: async receivedData => {
+            await onDataRemoved(data, receivedData, sharedContext, buffer)
+            void flushData()
+          },
+        })
+        await execute()
+      }
+    } else if (pollingInterval !== false) {
+      const timeoutPoll = useTimeoutPoll(execute, pollingInterval, {
+        immediateCallback: true,
+        immediate: false,
+      })
+
+      pause = timeoutPoll.pause
+      resume = timeoutPoll.resume
+    }
+
+    const state = stateScope.run(() => buildState(data, sharedContext))!
+
+    const entry: CacheEntry = {
+      count: 0,
+      pause,
+      resume,
+      execute,
+      isPaused: true,
+      state,
+      stateScope,
+      isReady,
+      isFetching,
+      lastError,
+      hasError,
+    }
+
+    cache.set(url, entry)
+
+    scheduleEviction(url, entry)
+  }
+
+  function initializeUrl(url: ComputedRef<string>, context: ResourceContext<TArgs>) {
+    let subscribedUrl: string | undefined
+
+    watch(
+      [url, context.isEnabled],
+      ([currentUrl, isEnabled]) => {
+        registerUrl(currentUrl, context)
+
+        const targetUrl = isEnabled ? currentUrl : undefined
+
+        if (targetUrl === subscribedUrl) {
+          return
+        }
+
+        if (targetUrl !== undefined) {
+          subscribeToUrl(targetUrl)
+        }
+
+        if (subscribedUrl !== undefined) {
+          unsubscribeFromUrl(subscribedUrl)
+        }
+
+        subscribedUrl = targetUrl
+      },
+      { immediate: true }
+    )
+
+    onScopeDispose(() => {
+      if (subscribedUrl !== undefined) {
+        unsubscribeFromUrl(subscribedUrl)
+      }
+    })
+  }
+
+  return function useRemoteResource(
+    optionsOrParentContext?: { isEnabled?: MaybeRef<boolean>; scope?: EffectScope },
+    ...args: { [K in keyof TArgs]: MaybeRefOrGetter<TArgs[K]> }
+  ) {
+    const scope = optionsOrParentContext?.scope ?? getCurrentScope()
+
+    if (!scope) {
+      throw new Error('No effect scope found. Please provide a scope or use this function within a Vue component.')
+    }
+
+    if (!scope.active) {
+      throw new Error(
+        'useRemoteResource() was called with an inactive effect scope. This usually means a stale scope/context, (e.g. captured from an unmounted component) is being reused'
+      )
+    }
+
+    const isEnabled = toRef(optionsOrParentContext?.isEnabled ?? true)
+
+    return scope.run(() => {
+      const url = computed(() => buildUrl(...(args.map(arg => toValue(arg)) as TArgs)))
+
+      const context: ResourceContext<TArgs> = {
+        scope,
+        args,
+        isReady: computed(() => cache.get(url.value)?.isReady.value ?? false),
+        isFetching: computed(() => cache.get(url.value)?.isFetching?.value ?? false),
+        lastError: computed(() => cache.get(url.value)?.lastError.value),
+        hasError: computed(() => cache.get(url.value)?.hasError.value ?? false),
+        isEnabled,
+        enable: () => {
+          isEnabled.value = true
+        },
+        disable: () => {
+          isEnabled.value = false
+        },
+        forceReload: async () => {
+          await cache.get(url.value)?.execute()
+        },
+      }
+
+      initializeUrl(url, context)
+
+      const state = reactive({} as TState)
+
+      watch(
+        () => cache.get(url.value),
+        entry => {
+          if (entry !== undefined) {
+            Object.assign(state, entry.state)
+          }
+        },
+        { immediate: true }
+      )
+
+      return {
+        ...Object.fromEntries(
+          Object.entries(state).map(([key, value]) =>
+            typeof value === 'function' ? [key, value] : [key, toRef(state, key as any)]
+          )
+        ),
+        $context: context,
+      }
+    })!
+  }
+}

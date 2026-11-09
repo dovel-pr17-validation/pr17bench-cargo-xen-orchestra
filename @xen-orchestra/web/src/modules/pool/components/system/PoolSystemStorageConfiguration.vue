@@ -1,0 +1,81 @@
+<template>
+  <UiCard>
+    <UiTitle>
+      {{ t('storage-configuration') }}
+    </UiTitle>
+    <VtsStateHero v-if="!areSrsReady" format="card" type="busy" size="medium" />
+    <VtsTabularKeyValueList v-else>
+      <VtsTabularKeyValueRow :label="t('default-storage-repository')">
+        <template #value>
+          <template v-if="defaultSr">
+            <VtsIcon name="object:sr" size="medium" />
+            {{ defaultSr.name_label }}
+          </template>
+          <template v-else>
+            {{ t('none') }}
+          </template>
+        </template>
+      </VtsTabularKeyValueRow>
+      <VtsTabularKeyValueRow :label="t('suspend-storage-repository')">
+        <template #value>
+          <template v-if="suspendSr">
+            <VtsIcon name="object:sr" size="medium" />
+            {{ suspendSr.name_label }}
+          </template>
+          <template v-else>
+            {{ t('none') }}
+          </template>
+        </template>
+      </VtsTabularKeyValueRow>
+      <VtsTabularKeyValueRow :label="t('crash-dump-storage-repository')">
+        <template #value>
+          <template v-if="crashDumpSr">
+            <VtsIcon name="object:sr" size="medium" />
+            {{ crashDumpSr.name_label }}
+          </template>
+          <template v-else>
+            {{ t('none') }}
+          </template>
+        </template>
+      </VtsTabularKeyValueRow>
+      <VtsTabularKeyValueRow :label="t('heartbeat-storage-repository')">
+        <template #value>
+          <ul v-if="haSrs.length > 0">
+            <li v-for="haSr in haSrs" :key="haSr.id">
+              <VtsIcon name="object:sr" size="medium" />
+              {{ haSr.name_label }}
+            </li>
+          </ul>
+          <template v-else>
+            {{ t('none') }}
+          </template>
+        </template>
+      </VtsTabularKeyValueRow>
+    </VtsTabularKeyValueList>
+  </UiCard>
+</template>
+
+<script lang="ts" setup>
+import type { FrontXoPool } from '@/modules/pool/remote-resources/use-xo-pool-collection.ts'
+import { useXoSrCollection } from '@/modules/storage-repository/remote-resources/use-xo-sr-collection.ts'
+import VtsIcon from '@core/components/icon/VtsIcon.vue'
+import VtsStateHero from '@core/components/state-hero/VtsStateHero.vue'
+import VtsTabularKeyValueList from '@core/components/tabular-key-value-list/VtsTabularKeyValueList.vue'
+import VtsTabularKeyValueRow from '@core/components/tabular-key-value-row/VtsTabularKeyValueRow.vue'
+import UiCard from '@core/components/ui/card/UiCard.vue'
+import UiTitle from '@core/components/ui/title/UiTitle.vue'
+import { useI18n } from 'vue-i18n'
+
+const { pool } = defineProps<{
+  pool: FrontXoPool
+}>()
+
+const { t } = useI18n()
+
+const { useGetSrById, useGetSrsByIds, areSrsReady } = useXoSrCollection()
+
+const defaultSr = useGetSrById(() => pool.default_SR)
+const suspendSr = useGetSrById(() => pool.suspendSr)
+const crashDumpSr = useGetSrById(() => pool.crashDumpSr)
+const haSrs = useGetSrsByIds(() => pool.haSrs ?? [])
+</script>

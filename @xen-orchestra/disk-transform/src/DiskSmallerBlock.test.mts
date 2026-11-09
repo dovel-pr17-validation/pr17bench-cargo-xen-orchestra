@@ -1,0 +1,254 @@
+import assert from 'node:assert'
+import { test } from 'node:test'
+import { DiskSmallerBlock } from './DiskSmallerBlock.mjs'
+import { RandomAccessDisk, DiskBlock, Disk } from './Disk.mjs'
+
+// Mock implementation of RandomAccessDisk for testing
+class MockDisk extends RandomAccessDisk {
+  private blockSize: number
+  private virtualSize: number
+  private blocks: Map<number, Buffer>
+  public closed: boolean = false
+  public initialized: boolean = false
+  public isDiff: boolean = false
+  public parentDisk: RandomAccessDisk | null = null
+
+  constructor(blockSize: number, virtualSize: number, blocks: [number, Buffer][] = []) {
+    super()
+    this.blockSize = blockSize
+    this.virtualSize = virtualSize
+    this.blocks = new Map(blocks)
+  }
+
+  async readBlock(index: number): Promise<DiskBlock> {
+    if (this.closed) throw new Error('Disk closed')
+    if (!this.initialized) throw new Error('Disk not initialized')
+    if (!this.blocks.has(index)) {
+      if (this.isDiff && this.parentDisk) {
+        return this.parentDisk.readBlock(index)
+      }
+      throw new Error(`Block ${index} not found`)
+    }
+    return { index, data: this.blocks.get(index)! }
+  }
+
+  getVirtualSize(): number {
+    return this.virtualSize
+  }
+  getBlockSize(): number {
+    return this.blockSize
+  }
+  async init(): Promise<void> {
+    this.initialized = true
+  }
+  async close(): Promise<void> {
+    this.closed = true
+  }
+  isDifferencing(): boolean {
+    return this.isDiff
+  }
+  instantiateParent(): RandomAccessDisk {
+    if (!this.parentDisk) throw new Error('No parent disk available')
+    return this.parentDisk
+  }
+  getBlockIndexes(): number[] {
+    return [...this.blocks.keys()]
+  }
+  hasBlock(index: number): boolean {
+    return this.blocks.has(index) || (this.isDiff && !!this.parentDisk && this.parentDisk.hasBlock(index))
+  }
+}
+
+// Helper function to create a buffer with pattern
+function createPatternBuffer(size: number, pattern: string): Buffer {
+  const buf = Buffer.alloc(size)
+  for (let i = 0; i < size; i++) {
+    buf[i] = pattern.charCodeAt(i % pattern.length)
+  }
+  return buf
+}
+
+// Test suite
+test('constructor and initialization', async () => {
+  const source = new MockDisk(512, 1024 * 1024)
+  const disk = new DiskSmallerBlock(source, 256)
+
+  // Test that blockSize must be a multiple of source blockSize
+  await assert.rejects(
+    async () => {
+      const invalidDisk = new DiskSmallerBlock(source, 452)
+      await invalidDisk.init()
+    },
+    { message: /must be a multiple/ }
+  )
+  // Test that blockSize must be smaller than source blockSize
+  await assert.rejects(
+    async () => {
+      const invalidDisk = new DiskSmallerBlock(source, 1024 * 2)
+      await invalidDisk.init()
+    },
+    { message: /smaller/ }
+  )
+
+  await disk.init()
+  assert.strictEqual(disk.getBlockSize(), 256)
+  assert.strictEqual(disk.getVirtualSize(), 1024 * 1024)
+})
+
+test('readBlock with simple block mapping', async () => {
+  // Create source disk with two 512-byte blocks
+  const block1 = createPatternBuffer(512, 'A')
+  const block2 = createPatternBuffer(512, 'B')
+  const source = new MockDisk(512, 1024, [
+    [0, block1],
+    [1, block2],
+  ])
+  await source.init()
+
+  const disk = new DiskSmallerBlock(source, 256)
+  await disk.init()
+
+  // Read the first block , half
+  const result = await disk.readBlock(2)
+  assert.strictEqual(result.index, 2)
+  assert.strictEqual(result.data.length, 256)
+
+  // Verify the data is correctly combined
+  assert(block2.subarray(0, 256).equals(result.data))
+})
+test('readBlock interleaved', async () => {
+  // Create source disk with two 512-byte blocks
+  const block1 = createPatternBuffer(512, 'A')
+  const block2 = createPatternBuffer(512, 'B')
+  const source = new MockDisk(512, 1024, [
+    [0, block1],
+    [1, block2],
+  ])
+  await source.init()
+
+  const disk = new DiskSmallerBlock(source, 256)
+  await disk.init()
+
+  // Read the first block , half
+  await disk.readBlock(1)
+  // then second block
+  await disk.readBlock(2)
+  // then back to first
+  const result = await disk.readBlock(0)
+
+  // Verify the data is correctly combined
+  assert(block1.subarray(0, 256).equals(result.data))
+})
+
+test('hasBlock behavior', async () => {
+  const source = new MockDisk(512, 2048, [
+    [0, Buffer.alloc(512)],
+    [2, Buffer.alloc(512)],
+  ])
+  await source.init()
+
+  const disk = new DiskSmallerBlock(source, 256)
+  await disk.init()
+
+  assert(disk.hasBlock(0))
+  assert(disk.hasBlock(1))
+  assert(!disk.hasBlock(2))
+  assert(!disk.hasBlock(3))
+  assert(disk.hasBlock(4))
+  assert(disk.hasBlock(5))
+})
+
+test('getBlockIndexes', async () => {
+  const source = new MockDisk(512, 2048, [
+    [0, Buffer.alloc(2048)],
+    [2, Buffer.alloc(2048)],
+  ])
+  await source.init()
+
+  const disk = new DiskSmallerBlock(source, 256)
+  await disk.init()
+
+  const indexes = disk.getBlockIndexes()
+  assert.deepStrictEqual(indexes, [0, 1, 4, 5])
+})
+
+test('close propagation', async () => {
+  const source = new MockDisk(512, 1024)
+  await source.init()
+
+  const disk = new DiskSmallerBlock(source, 256)
+  await disk.init()
+
+  await disk.close()
+  assert(source.closed)
+})
+
+test('getBlockIndexesCount - last source block not allocated, no trimming needed', async () => {
+  // virtualSize=2048, sourceBlockSize=512, blockSize=256, blockRatio=2
+  // #maxBlockIndex=8, lastSourceBlockIndex=3, hasBlock(3)=false
+  // count = 2 * 2 = 4
+  const source = new MockDisk(512, 2048, [
+    [0, Buffer.alloc(512)],
+    [2, Buffer.alloc(512)],
+  ])
+  await source.init()
+  const disk = new DiskSmallerBlock(source, 256)
+  await disk.init()
+
+  assert.strictEqual(disk.getBlockIndexesCount(), 4)
+  assert.strictEqual(disk.getBlockIndexesCount(), disk.getBlockIndexes().length)
+})
+
+test('getBlockIndexesCount - last source block allocated and aligned, excess=0', async () => {
+  // virtualSize=1024, sourceBlockSize=512, blockSize=256, blockRatio=2
+  // #maxBlockIndex=4, lastSourceBlockIndex=1, hasBlock(1)=true
+  // excess = (1+1)*2 - 4 = 0 -> count = 1*2 = 2
+  const source = new MockDisk(512, 1024, [[1, Buffer.alloc(512)]])
+  await source.init()
+  const disk = new DiskSmallerBlock(source, 256)
+  await disk.init()
+
+  assert.strictEqual(disk.getBlockIndexesCount(), 2)
+  assert.strictEqual(disk.getBlockIndexesCount(), disk.getBlockIndexes().length)
+})
+
+test('getBlockIndexesCount - unaligned end, last source block allocated, excess>0', async () => {
+  // virtualSize=2304, sourceBlockSize=1024, blockSize=256, blockRatio=4
+  // #maxBlockIndex=9, lastSourceBlockIndex=2, hasBlock(2)=true
+  // excess = (2+1)*4 - 9 = 3 -> count = 2*4 - 3 = 5
+  const source = new MockDisk(1024, 2048 + 256, [
+    [0, Buffer.alloc(1024)],
+    [2, Buffer.alloc(1024)],
+  ])
+  await source.init()
+  const disk = new DiskSmallerBlock(source, 256)
+  await disk.init()
+
+  assert.strictEqual(disk.getBlockIndexesCount(), 5)
+  assert.strictEqual(disk.getBlockIndexesCount(), disk.getBlockIndexes().length)
+})
+
+test('unaligned END ', async () => {
+  const source = new MockDisk(1024, 2048 + 256, [
+    [0, Buffer.alloc(1024)],
+    [2, Buffer.alloc(1024)],
+  ])
+  await source.init()
+
+  const disk = new DiskSmallerBlock(source, 256)
+  await disk.init()
+  assert.strictEqual(source.getVirtualSize(), disk.getVirtualSize())
+
+  const indexes = disk.getBlockIndexes()
+  const expecteBlockIndex = [0, 1, 2, 3, 8]
+  assert.deepStrictEqual(indexes, expecteBlockIndex)
+  assert.strictEqual(disk.hasBlock(8), true)
+  assert.strictEqual(disk.hasBlock(9), false) //After the end of small block disk
+  assert.strictEqual(disk.hasBlock(12), false) //After the end of source disk
+
+  // ensure disk blocks also handle the unaligned part
+  for await (const { index, data } of disk.diskBlocks()) {
+    assert.ok(expecteBlockIndex.includes(index))
+    assert.equal(data.length, 256)
+  }
+})

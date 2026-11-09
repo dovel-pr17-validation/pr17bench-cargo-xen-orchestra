@@ -1,0 +1,192 @@
+<template>
+  <VtsQuickInfoCard class="vm-dashboard-quick-info" :loading="!isReady">
+    <VtsKeyValueList>
+      <VtsKeyValueRow :label="t('state')">
+        <template #value>
+          <span class="power-state">
+            <VtsIcon :name="powerState.icon" size="medium" />
+            {{ powerState.text }}
+          </span>
+        </template>
+      </VtsKeyValueRow>
+      <VtsKeyValueRow :label="t('ip-address')" :value="mainIpAddress" copy />
+      <VtsKeyValueRow :label="t('created-on')" :value="installDateFormatted" />
+      <VtsKeyValueRow :label="t('started')" :value="relativeStartTime" />
+    </VtsKeyValueList>
+    <VtsKeyValueList>
+      <VtsKeyValueRow :label="t('uuid')" :value="vm.uuid" copy />
+      <VtsKeyValueRow :label="t('host')">
+        <template #value>
+          <UiLink
+            v-if="host"
+            :to="`/host/${host.uuid}`"
+            size="medium"
+            :icon="hostIcon"
+            :is-primary="isPoolMaster"
+            :primary-tooltip="t('master')"
+          >
+            {{ host.name_label }}
+          </UiLink>
+          <span v-else>
+            {{ t('none') }}
+          </span>
+        </template>
+      </VtsKeyValueRow>
+    </VtsKeyValueList>
+    <VtsKeyValueList>
+      <VtsKeyValueRow :label="t('description')" :value="vm.name_description" />
+      <VtsKeyValueRow :label="t('os-name')" :value="osVersion" />
+      <VtsKeyValueRow :label="t('virtualization-type')" :value="virtualizationType" />
+      <VtsKeyValueRow :label="t('guest-tools')" :value="guestTools" />
+    </VtsKeyValueList>
+    <VtsKeyValueList>
+      <VtsKeyValueRow :label="t('vcpus')" :value="String(vm.VCPUs_at_startup)" />
+      <VtsKeyValueRow :label="t('ram')" :value="`${ram.value} ${ram.prefix}`" />
+      <VtsKeyValueRow :label="t('tags')">
+        <template #value>
+          <UiTagsList v-if="vm.tags.length > 0">
+            <VtsTag v-for="tag in vm.tags" :key="tag" :value="tag" />
+          </UiTagsList>
+        </template>
+      </VtsKeyValueRow>
+    </VtsKeyValueList>
+  </VtsQuickInfoCard>
+</template>
+
+<script lang="ts" setup>
+import { VM_POWER_STATE } from '@/libs/xen-api/xen-api.enums.ts'
+import type { XenApiVm } from '@/libs/xen-api/xen-api.types.ts'
+import { getHostIcon } from '@/modules/host/utils/host.util.ts'
+import { useHostMetricsStore } from '@/stores/xen-api/host-metrics.store.ts'
+import { usePoolStore } from '@/stores/xen-api/pool.store.ts'
+import { useVmGuestMetricsStore } from '@/stores/xen-api/vm-guest-metrics.store.ts'
+import { useVmMetricsStore } from '@/stores/xen-api/vm-metrics.store.ts'
+import { useVmStore } from '@/stores/xen-api/vm.store.ts'
+import VtsIcon from '@core/components/icon/VtsIcon.vue'
+import VtsKeyValueList from '@core/components/key-value-list/VtsKeyValueList.vue'
+import VtsKeyValueRow from '@core/components/key-value-row/VtsKeyValueRow.vue'
+import VtsQuickInfoCard from '@core/components/quick-info-card/VtsQuickInfoCard.vue'
+import VtsTag from '@core/components/tag/VtsTag.vue'
+import UiLink from '@core/components/ui/link/UiLink.vue'
+import UiTagsList from '@core/components/ui/tag/UiTagsList.vue'
+import { useTimeAgo } from '@core/composables/locale-time-ago.composable.ts'
+import { useMapper } from '@core/packages/mapper'
+import { formatSizeRaw } from '@core/utils/size.util.ts'
+import { formatDate, parseDateTime } from '@core/utils/time.util.ts'
+import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
+
+const { vm } = defineProps<{
+  vm: XenApiVm
+}>()
+
+const { t } = useI18n()
+
+const { isReady, getVmHost } = useVmStore().subscribe()
+const { getByOpaqueRef: getGuestMetricsByOpaqueRef } = useVmGuestMetricsStore().subscribe()
+const { getByOpaqueRef: getMetricsByOpaqueRef } = useVmMetricsStore().subscribe()
+const { getHostPowerState } = useHostMetricsStore().subscribe()
+const { pool } = usePoolStore().subscribe()
+
+const guestMetrics = computed(() => getGuestMetricsByOpaqueRef(vm.guest_metrics))
+
+const metrics = computed(() => getMetricsByOpaqueRef(vm.metrics))
+
+const host = computed(() => getVmHost(vm))
+
+const isPoolMaster = computed(() => pool.value?.master === host.value?.$ref)
+
+const hostIcon = computed(() => getHostIcon(host.value, getHostPowerState(host.value)))
+
+const powerState = useMapper(
+  () => vm.power_state,
+  {
+    [VM_POWER_STATE.RUNNING]: { icon: 'status:running-circle', text: t('vm:status:running') },
+    [VM_POWER_STATE.HALTED]: { icon: 'status:halted-circle', text: t('vm:status:halted') },
+    [VM_POWER_STATE.PAUSED]: { icon: 'status:paused-circle', text: t('vm:status:paused') },
+    [VM_POWER_STATE.SUSPENDED]: { icon: 'status:suspended-circle', text: t('vm:status:suspended') },
+  },
+  VM_POWER_STATE.RUNNING
+)
+
+function getValidDateTime(dateTime: string | undefined): string | undefined {
+  return dateTime === '19700101T00:00:00Z' ? undefined : dateTime
+}
+
+const startTime = computed(() => {
+  const dateTime = getValidDateTime(metrics.value?.start_time)
+
+  return dateTime ? new Date(parseDateTime(dateTime)) : undefined
+})
+
+const vmTimeAgo = useTimeAgo(() => startTime.value ?? 0)
+
+const relativeStartTime = computed(() => {
+  if (startTime.value === undefined) {
+    return t('not-running')
+  }
+
+  return vmTimeAgo.value
+})
+
+const installDateFormatted = computed(() => {
+  const installTime = getValidDateTime(metrics.value?.install_time)
+
+  if (installTime === undefined) {
+    return t('unknown')
+  }
+
+  return formatDate(installTime)
+})
+
+const ram = computed(() => formatSizeRaw(vm.memory_dynamic_max, 0))
+
+const osVersion = computed(() => guestMetrics.value?.os_version.name)
+
+const domainType = computed(() => {
+  if (
+    vm.domain_type !== undefined && // XS < 7.5
+    vm.domain_type !== 'unspecified' // detection failed
+  ) {
+    return vm.domain_type
+  }
+
+  return vm.HVM_boot_policy === '' ? 'pv' : 'hvm'
+})
+
+const virtualizationType = computed(() =>
+  domainType.value === 'hvm' && guestMetrics.value?.PV_drivers_detected ? 'pvhvm' : domainType.value
+)
+
+const guestTools = computed(() => {
+  const version = guestMetrics.value?.PV_drivers_version
+
+  if (!guestMetrics.value?.PV_drivers_detected || !version) {
+    return ''
+  }
+
+  if (Object.entries(version).length === 0) {
+    return ''
+  }
+
+  return `${version.major}.${version.minor}.${version.micro}-${version.build}`
+})
+
+const mainIpAddress = computed(() => {
+  if (!guestMetrics.value?.networks) {
+    return undefined
+  }
+
+  return [...new Set(Object.values(guestMetrics.value.networks).sort())][0]
+})
+</script>
+
+<style lang="postcss" scoped>
+.vm-dashboard-quick-info {
+  .power-state {
+    display: flex;
+    align-items: center;
+    gap: 0.8rem;
+  }
+}
+</style>

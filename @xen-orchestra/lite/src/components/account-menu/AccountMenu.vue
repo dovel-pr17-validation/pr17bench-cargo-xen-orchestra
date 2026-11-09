@@ -1,0 +1,63 @@
+<template>
+  <MenuList placement="bottom-end">
+    <template #trigger="{ open, isOpen }">
+      <UiAccountMenuButton
+        v-tooltip="isOpen ? false : { content: t('settings'), placement: 'left' }"
+        :selected="isOpen"
+        size="medium"
+        @click="open($event)"
+      />
+    </template>
+    <MenuItem accent="brand" icon="fa:gear" @click="openSettings">{{ t('settings') }}</MenuItem>
+    <MenuItem
+      accent="brand"
+      icon="fa:book"
+      @click="openUrl('https://docs.xcp-ng.org?utm_campaign=xolite&utm_term=xcpdoc')"
+    >
+      {{ t('documentation-name', { name: 'XCP-ng' }) }}
+    </MenuItem>
+    <MenuItem
+      accent="brand"
+      icon="fa:headset"
+      @click="openUrl('https://vates.tech/pricing-and-support?utm_campaign=xolite&utm_term=pricing')"
+    >
+      {{ t('professional-support') }}
+    </MenuItem>
+    <MenuItem
+      accent="brand"
+      icon="fa:comments"
+      @click="openUrl('https://xcp-ng.org/forum/topic/4731/xen-orchestra-lite?utm_campaign=xolite&utm_term=forum')"
+    >
+      {{ t('access-forum') }}
+    </MenuItem>
+    <MenuItem accent="brand" icon="fa:arrow-right-from-bracket" @click="logout">
+      {{ t('action:log-out') }}
+    </MenuItem>
+  </MenuList>
+</template>
+
+<script lang="ts" setup>
+import { useXenApiStore } from '@/stores/xen-api.store.ts'
+import MenuItem from '@core/components/menu/MenuItem.vue'
+import MenuList from '@core/components/menu/MenuList.vue'
+import UiAccountMenuButton from '@core/components/ui/account-menu-button/UiAccountMenuButton.vue'
+import { vTooltip } from '@core/directives/tooltip.directive.ts'
+import { nextTick } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { useRouter } from 'vue-router'
+
+const { t } = useI18n()
+
+const router = useRouter()
+
+const logout = () => {
+  const xenApiStore = useXenApiStore()
+  xenApiStore.disconnect()
+  nextTick(() => router.push({ name: '/' }))
+}
+
+const openUrl = (url: string) => {
+  window.open(url, '_blank', 'noopener noreferrer')
+}
+const openSettings = () => router.push({ name: '/settings' })
+</script>

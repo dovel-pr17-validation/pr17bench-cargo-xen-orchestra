@@ -1,0 +1,58 @@
+<template>
+  <UiCard :has-error>
+    <UiCardTitle>{{ t('status') }}</UiCardTitle>
+    <VtsStateHero v-if="!isReady" format="card" type="busy" size="medium" />
+    <VtsStateHero v-else-if="hasError" format="card" type="error" size="medium">{{ t('error-no-data') }}</VtsStateHero>
+    <template v-else>
+      <PoolDashboardStatusItem
+        :active="activeHostsCount"
+        :label="t('hosts')"
+        :active-label="t('host:status:active', 2)"
+        :inactive-label="t('host:status:inactive', 2)"
+        :total="totalHostsCount"
+      />
+      <VtsDivider type="stretch" />
+      <PoolDashboardStatusItem
+        :active="activeVmsCount"
+        :label="t('vms')"
+        :active-label="t('vm:status:active', 2)"
+        :inactive-label="t('vm:status:inactive', 2)"
+        :total="totalVmsCount"
+      />
+    </template>
+  </UiCard>
+</template>
+
+<script lang="ts" setup>
+import PoolDashboardStatusItem from '@/components/pool/dashboard/PoolDashboardStatusItem.vue'
+import { useHostMetricsStore } from '@/stores/xen-api/host-metrics.store.ts'
+import { useVmStore } from '@/stores/xen-api/vm.store.ts'
+import VtsDivider from '@core/components/divider/VtsDivider.vue'
+import VtsStateHero from '@core/components/state-hero/VtsStateHero.vue'
+import UiCard from '@core/components/ui/card/UiCard.vue'
+import UiCardTitle from '@core/components/ui/card-title/UiCardTitle.vue'
+import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
+
+const { t } = useI18n()
+
+const { isReady: isVmReady, records: vms, hasError: hasVmError } = useVmStore().subscribe()
+
+const {
+  isReady: isHostMetricsReady,
+  records: hostMetrics,
+  hasError: hasHostMetricsError,
+} = useHostMetricsStore().subscribe()
+
+const hasError = computed(() => hasVmError.value || hasHostMetricsError.value)
+
+const isReady = computed(() => isVmReady.value && isHostMetricsReady.value)
+
+const totalHostsCount = computed(() => hostMetrics.value.length)
+
+const activeHostsCount = computed(() => hostMetrics.value.filter(hostMetrics => hostMetrics.live).length)
+
+const totalVmsCount = computed(() => vms.value.length)
+
+const activeVmsCount = computed(() => vms.value.filter(vm => vm.power_state === 'Running').length)
+</script>

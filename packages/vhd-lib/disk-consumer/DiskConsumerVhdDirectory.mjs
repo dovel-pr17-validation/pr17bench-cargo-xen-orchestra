@@ -1,0 +1,123 @@
+// @ts-check
+
+/**
+ * @typedef {import('@xen-orchestra/disk-transform').FileAccessor} FileAccessor
+ * @typedef {import('@xen-orchestra/disk-transform').Disk} Disk
+ */
+
+import { BaseVhd } from './BaseVhd.mjs'
+import { basename, dirname } from 'node:path'
+import { asyncEach } from '@vates/async-each'
+import { VhdDirectory, VhdAbstract } from 'vhd-lib'
+import { unpackFooter, unpackHeader } from 'vhd-lib/Vhd/_utils.js'
+import { DEFAULT_BLOCK_SIZE } from '../_constants.js'
+import assert from 'node:assert'
+import { isCompressedBlock } from './compressedBlock.mjs'
+
+/**
+ * @typedef {Object} VhdRemoteTarget
+ * @property {FileAccessor} handler
+ * @property {string} path
+ * @property {string} compression
+ * @property {number} concurrency
+ * @property {string} flags
+ * @property {Buffer?} uuid
+ * @property {Buffer?} parentUuid
+ * @property {string?} parentPath
+ * @property {(path: string) => Promise<void>} validator
+ */
+
+/**
+ * @extends {BaseVhd}
+ */
+export class DiskConsumerVhdDirectory extends BaseVhd {
+  /** @type {VhdRemoteTarget} */
+  #target
+
+  /**
+   * @param {Disk} source
+   * @param {VhdRemoteTarget} target
+   */
+  constructor(source, target) {
+    super(source)
+    this.#target = target
+  }
+
+  /**
+   * @param {AbortSignal} [signal]
+   * @returns {Promise<number>}
+   */
+  async write(signal) {
+    const { handler, path, compression, flags, validator, concurrency, uuid, parentUuid, parentPath } = this.#target
+    const SUFFIX = '.alias.vhd'
+    assert.ok(path.endsWith(SUFFIX), `filename must be an alias , got ${path}`)
+    const base = basename(path).slice(0, -SUFFIX.length)
+    const dataPath = `${dirname(path)}/data/${base}.vhd`
+    const uid = 'to stream ' + Math.random()
+    let generator
+    try {
+      signal?.throwIfAborted()
+      generator = this.source.diskBlocks(uid)
+      await handler.mktree(dataPath)
+      const vhd = new VhdDirectory(handler, dataPath, { flags: flags ?? 'w', compression })
+      vhd.footer = unpackFooter(this.computeVhdFooter())
+      if (uuid) {
+        vhd.footer.uuid = uuid
+      }
+      vhd.header = unpackHeader(this.computeVhdHeader())
+      if (parentUuid) {
+        vhd.header.parentUuid = parentUuid
+      }
+      if (parentPath) {
+        vhd.header.parentUnicodeName = parentPath
+      }
+      /**
+       * @type {import('@xen-orchestra/disk-transform').DiskBlock | null}
+       */
+      let truncatedBlock = null
+      await asyncEach(
+        generator,
+        async block => {
+          signal?.throwIfAborted()
+          const { index, data } = block
+          if (isCompressedBlock(block)) {
+            // writing it with another compression would produce an unreadable block
+            assert.strictEqual(
+              block.compression,
+              compression,
+              `can't write a ${block.compression} compressed block ${index} in ${dataPath}`
+            )
+            // the size of a compressed block is not related to the block size
+            await vhd.writeCompressedBlock(index, data)
+            return
+          }
+          if (truncatedBlock !== null) {
+            throw new Error(
+              `Expecting a ${DEFAULT_BLOCK_SIZE} bytes block, got a ${truncatedBlock.data.length}, for index ${truncatedBlock.index}`
+            )
+          }
+          if (data.length < DEFAULT_BLOCK_SIZE) {
+            truncatedBlock = { data, index }
+          }
+          // the last block of a disk may be shorter: pad it with zeros
+          await vhd.writeBlockData(
+            index,
+            data.length < DEFAULT_BLOCK_SIZE ? Buffer.concat([data], DEFAULT_BLOCK_SIZE) : data
+          )
+        },
+        { concurrency }
+      )
+      await Promise.all([vhd.writeFooter(), vhd.writeHeader(), vhd.writeBlockAllocationTable()])
+      // a VHD directory can only be opened through its alias.
+      await VhdAbstract.createAlias(handler, path, dataPath)
+      await validator(path)
+      // this will return VHD metadata size + block size, even for disk bigger than bigger than 2TB
+      return vhd.streamSize()
+    } catch (err) {
+      await this.source.close().catch(() => {}) // close this disk in error
+      await handler.unlink(path).catch(() => {}) // alias
+      await handler.rmtree(dataPath).catch(() => {}) // data
+      throw err
+    }
+  }
+}

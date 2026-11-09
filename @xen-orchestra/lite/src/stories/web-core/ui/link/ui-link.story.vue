@@ -1,0 +1,41 @@
+<template>
+  <ComponentStory
+    v-slot="{ properties }"
+    :params="[
+      prop('size').required().enum('small', 'medium').preset('medium').widget(),
+      prop('to').str().widget(),
+      prop('href').str().widget(),
+      iconProp(),
+      prop('isPrimary').bool().widget(),
+      prop('primaryTooltip').str().widget(),
+      prop('disabled').bool().widget(),
+      prop('disabled').bool().widget(),
+      prop('target').enum('_blank', '_self').widget(),
+    ]"
+  >
+    <UiLink v-bind="properties">This is a link</UiLink>
+
+    <div v-if="!properties.to && !properties.href" class="info">
+      <VtsIcon name="status:info-circle" size="medium" />
+      Link is disabled because no `href` or `to` is provided
+    </div>
+    <div v-else-if="properties.to && properties.href" class="info">
+      <VtsIcon name="status:warning-circle" size="medium" />
+      `to` is ignored when `href` is provided
+    </div>
+  </ComponentStory>
+</template>
+
+<script lang="ts" setup>
+import ComponentStory from '@/components/component-story/ComponentStory.vue'
+import { iconProp, prop } from '@/libs/story/story-param.ts'
+import VtsIcon from '@core/components/icon/VtsIcon.vue'
+import UiLink from '@core/components/ui/link/UiLink.vue'
+</script>
+
+<style lang="postcss" scoped>
+.info {
+  margin-top: 4rem;
+  font-style: italic;
+}
+</style>

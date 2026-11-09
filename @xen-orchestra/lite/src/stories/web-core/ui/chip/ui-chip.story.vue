@@ -1,0 +1,20 @@
+<template>
+  <ComponentStory
+    v-slot="{ properties, settings }"
+    :params="[
+      prop('accent').required().enum('info', 'success', 'warning', 'danger').preset('info').widget(),
+      prop('disabled').bool().widget(),
+      event('remove'),
+      slot(),
+      setting('slot').preset('State: in progress').widget(),
+    ]"
+  >
+    <UiChip v-bind="properties">{{ settings.slot }}</UiChip>
+  </ComponentStory>
+</template>
+
+<script lang="ts" setup>
+import ComponentStory from '@/components/component-story/ComponentStory.vue'
+import { event, prop, setting, slot } from '@/libs/story/story-param.ts'
+import UiChip from '@core/components/ui/chip/UiChip.vue'
+</script>

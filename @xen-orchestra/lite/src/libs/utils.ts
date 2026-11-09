@@ -1,0 +1,105 @@
+import { VM_POWER_STATE } from '@/libs/xen-api/xen-api.enums.ts'
+import type { Filter } from '@/types/filter.ts'
+import type { IconName } from '@core/icons'
+import format from 'human-format'
+import { find, forEach, round, size, sum } from 'lodash-es'
+
+export function escapeRegExp(string: string) {
+  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+const iconsByType: Record<string, IconName> = {
+  string: 'fa:font',
+  number: 'fa:hashtag',
+  boolean: 'fa:square-check',
+  enum: 'fa:list',
+}
+
+export function formatSize(bytes: number) {
+  return bytes != null ? format(bytes, { scale: 'binary', unit: 'B' }) : 'N/D'
+}
+
+export function getFilterIcon(filter: Filter | undefined) {
+  if (!filter) {
+    return
+  }
+
+  if (filter.icon) {
+    return filter.icon
+  }
+
+  return iconsByType[filter.type]
+}
+
+export function percent(currentValue: number, maxValue: number, precision = 2) {
+  return round((currentValue / maxValue) * 100, precision)
+}
+
+export function getAvgCpuUsage(cpus?: object | any[], { nSequence = 4 } = {}) {
+  const statsLength = getStatsLength(cpus)
+  if (statsLength === undefined) {
+    return
+  }
+  const _nSequence = statsLength < nSequence ? statsLength : nSequence
+
+  let totalCpusUsage = 0
+  forEach(cpus, (cpuState: number[]) => {
+    totalCpusUsage += sum(cpuState.slice(cpuState.length - _nSequence))
+  })
+  const stackedValue = totalCpusUsage / _nSequence
+  return stackedValue / size(cpus)
+}
+
+// stats can be null.
+// Return the size of the first non-null object.
+export function getStatsLength(stats?: object | any[]) {
+  if (stats === undefined) {
+    return undefined
+  }
+  return size(find(stats, stat => stat != null))
+}
+
+export function parseRamUsage(
+  {
+    memory,
+    memoryFree,
+  }: {
+    memory?: (number | null)[]
+    memoryFree?: (number | null)[]
+  } = {},
+  { nSequence = 4 } = {}
+) {
+  const _nSequence = Math.min(memory?.length ?? 0, nSequence)
+
+  let total = 0
+  let used = 0
+
+  memory = memory?.slice(memory.length - _nSequence)
+  memoryFree = memoryFree?.slice(memoryFree.length - _nSequence)
+
+  memory?.forEach((ram, key) => {
+    total += ram ?? NaN
+    used += (ram ?? NaN) - (memoryFree?.[key] ?? NaN)
+  })
+
+  const percentUsed = percent(used, total)
+  return {
+    // In case `memoryFree` is not given by the xapi,
+    // we won't be able to calculate the percentage of used memory properly.
+    percentUsed: memoryFree === undefined || isNaN(percentUsed) ? 0 : percentUsed,
+    total: total / _nSequence,
+    used: memoryFree === undefined ? 0 : used / _nSequence,
+  }
+}
+
+export const getFirst = <T>(value: T | T[]): T | undefined => (Array.isArray(value) ? value[0] : value)
+
+export function isIpv6(ip: string) {
+  return ip.includes(':')
+}
+
+export function ipToHostname(ip: string) {
+  return isIpv6(ip) ? `[${ip}]` : ip
+}
+
+export const ACTIVE_STATES = new Set([VM_POWER_STATE.RUNNING, VM_POWER_STATE.PAUSED])

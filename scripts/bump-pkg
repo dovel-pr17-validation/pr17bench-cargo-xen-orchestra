@@ -1,0 +1,77 @@
+#!/bin/sh
+
+set -eu
+
+if [ $# -eq 0 ] || [ "$1" = "-h" ]
+then
+  echo "Usage: $0 <package> [<version>]"
+  exit
+fi
+
+# move to the root repo dir
+cd "$(dirname "$(which "$0")")/.."
+
+pkg=$1
+
+case "$pkg" in
+  @*/*)
+    cd "$pkg"
+    ;;
+  *)
+    cd "packages/$pkg"
+esac
+
+if [ $# -ge 2 ]
+then
+  version=$2
+
+  # Prevent bump if package.json has unsaved modifications
+  #
+  # Avoid double-bump in case a previous publication/commit failed and bump-pkg
+  # is run again before reverting changes.
+  if ! git diff-index --quiet HEAD package.json
+  then
+    printf '%s\n' \
+      "Changes detected in \`$pkg/package.json\`!" \
+      '' \
+      "Either revert them or run \`bump-pkg\` without \`$version\`" >&2
+    exit 1
+  fi
+
+  npm --save=false --workspaces=false version "$version"
+  git checkout HEAD :/yarn.lock
+fi
+# if version is not passed, simply update other packages
+
+newVersion=$(node --eval 'console.log(require("./package.json").version)')
+
+cd -
+
+git grep -Flz "\"$pkg\":" '**/package.json' | xargs -0 node -e '
+const {readFileSync, writeFileSync} = require("fs")
+
+const [, pkg, version, ...files] = process.argv
+
+const updateDep = deps => {
+  if (deps !== undefined && pkg in deps) {
+    deps[pkg] = "^" + version
+  }
+}
+
+files.forEach(file => {
+  const data = JSON.parse(readFileSync(file, "utf8"))
+  updateDep(data.dependencies)
+  updateDep(data.devDependencies)
+  updateDep(data.peerDependencies)
+  writeFileSync(file, JSON.stringify(data, null, 2) + "\n")
+})
+' "$pkg" "$newVersion"
+
+git add --patch
+
+git commit -m "feat($pkg): $newVersion"
+
+# Don't create tags: we have no use for them ATM and they are not really
+# compatible with GitHub PRs (which are used for the release process)
+#
+# git tag $pkg-v$newVersion

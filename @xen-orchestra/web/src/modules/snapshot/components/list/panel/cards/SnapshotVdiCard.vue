@@ -1,0 +1,56 @@
+<template>
+  <UiPanelCard v-if="vmSnapshotVdiSnapshots.length > 0" class="snapshot-vdi-card">
+    <UiPanelCardTitle size="medium" :label="t('vdis')" :counter="vmSnapshotVdiSnapshots.length" />
+    <VtsCardRowList class="content">
+      <VtsCardRowList v-for="(vmSnapshotVdi, index) in vmSnapshotVdiSnapshots" :key="vmSnapshotVdi.id" class="content">
+        <SnapshotVdiLinkCardItem :vdi="vmSnapshotVdi" />
+        <!-- DESCRIPTION -->
+        <VtsCardRowKeyValue truncate>
+          <template #key>
+            {{ t('description') }}
+          </template>
+          <template #value>{{ vmSnapshotVdi.name_description }}</template>
+          <template v-if="vmSnapshotVdi.name_description" #addons>
+            <VtsCopyButton :value="vmSnapshotVdi.name_description" />
+          </template>
+        </VtsCardRowKeyValue>
+        <!-- USED SPACE -->
+        <SnapshotVdiUsageCardItem :usage="vmSnapshotVdi.usage" />
+        <!-- FORMAT -->
+        <VdiFormatCardItem :format="vmSnapshotVdi.image_format" />
+        <VtsDivider v-if="index < vmSnapshotVdiSnapshots.length - 1" class="divider" type="stretch" />
+      </VtsCardRowList>
+    </VtsCardRowList>
+  </UiPanelCard>
+</template>
+
+<script setup lang="ts">
+import SnapshotVdiLinkCardItem from '@/modules/snapshot/components/list/panel/card-items/SnapshotVdiLinkCardItem.vue'
+import SnapshotVdiUsageCardItem from '@/modules/snapshot/components/list/panel/card-items/SnapshotVdiUsageCardItem.vue'
+import type { FrontXoVmSnapshot } from '@/modules/snapshot/components/remote-resources/use-xo-vm-snapshot-collection.ts'
+import { useXoVmSnapshotVdiCollection } from '@/modules/snapshot/components/remote-resources/use-xo-vm-snapshot-vdi-collection.ts'
+import VdiFormatCardItem from '@/modules/vdi/components/list/panel/card-items/VdiFormatCardItem.vue'
+import VtsCardRowKeyValue from '@core/components/card/VtsCardRowKeyValue.vue'
+import VtsCardRowList from '@core/components/card/VtsCardRowList.vue'
+import VtsCopyButton from '@core/components/copy-button/VtsCopyButton.vue'
+import VtsDivider from '@core/components/divider/VtsDivider.vue'
+import UiPanelCard from '@core/components/ui/panel-card/UiPanelCard.vue'
+import UiPanelCardTitle from '@core/components/ui/panel-card-title/UiPanelCardTitle.vue'
+import { useI18n } from 'vue-i18n'
+
+const { snapshot } = defineProps<{ snapshot: FrontXoVmSnapshot }>()
+
+const { t } = useI18n()
+
+const { vmSnapshotVdiSnapshots } = useXoVmSnapshotVdiCollection({}, () => snapshot.id)
+</script>
+
+<style scoped lang="postcss">
+.snapshot-vdi-card {
+  .content {
+    .divider {
+      margin-block: 1.6rem;
+    }
+  }
+}
+</style>

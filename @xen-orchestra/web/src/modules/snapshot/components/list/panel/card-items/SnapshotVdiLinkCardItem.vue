@@ -1,0 +1,42 @@
+<template>
+  <UiLink :to="vdiRoute" :icon="vbdsSnapshotStatus" size="small">
+    {{ vdi.name_label }}
+  </UiLink>
+</template>
+
+<script setup lang="ts">
+import { useVbdsStatus, type VbdAttachmentStatus } from '@/modules/vbd/composables/use-vbds-status.composable.ts'
+import type { FrontXoVdiSnapshot } from '@/modules/vdi/remote-resources/use-xo-vdi-snapshot-collection.ts'
+import { VDI_PAGE_CONTEXT } from '@/shared/constants.ts'
+import type { IconName } from '@core/icons'
+import UiLink from '@core/components/ui/link/UiLink.vue'
+import { useMapper } from '@core/packages/mapper'
+import { computed } from 'vue'
+import type { RouteLocationAsRelative } from 'vue-router'
+
+const { vdi } = defineProps<{ vdi: FrontXoVdiSnapshot }>()
+
+const vbdsStatus = useVbdsStatus(() => vdi.$VBDs)
+
+const vbdsSnapshotStatus = useMapper<VbdAttachmentStatus, IconName>(
+  () => vbdsStatus.value,
+  {
+    allAttached: 'object:vdi:attached',
+    someAttached: 'object:vdi:disabled',
+    noneAttached: 'object:vdi:detached',
+  },
+  'someAttached'
+)
+
+const vdiRoute = computed<RouteLocationAsRelative | undefined>(() => {
+  if (!vdi.$snapshot_of) {
+    return undefined
+  }
+
+  return {
+    name: '/vdi/[id]/general',
+    params: { id: vdi.$snapshot_of },
+    query: { from: VDI_PAGE_CONTEXT.SNAPSHOT },
+  }
+})
+</script>

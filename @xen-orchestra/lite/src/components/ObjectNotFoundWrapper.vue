@@ -1,0 +1,42 @@
+<template>
+  <div v-if="!isReady" class="wrapper-spinner">
+    <UiLoader class="loader" />
+  </div>
+  <ObjectNotFoundView v-else-if="isRecordNotFound" :id />
+  <slot v-else />
+</template>
+
+<script generic="T extends XenApiRecord<ObjectType>, I extends T['uuid']" lang="ts" setup>
+import type { ObjectType, XenApiRecord } from '@/libs/xen-api/xen-api.types.ts'
+import ObjectNotFoundView from '@/pages/object-not-found.vue'
+import UiLoader from '@core/components/ui/loader/UiLoader.vue'
+import { computed } from 'vue'
+import { useRoute } from 'vue-router'
+
+const props = defineProps<{
+  isReady: boolean
+  uuidChecker: (uuid: I) => boolean
+  id?: I
+}>()
+
+const route = useRoute<'/pool/[uuid]' | '/host/[uuid]' | '/vm/[uuid]'>()
+
+const id = computed(() => props.id ?? (route.params.uuid as I))
+
+const isRecordNotFound = computed(() => props.isReady && !props.uuidChecker(id.value))
+</script>
+
+<style lang="postcss" scoped>
+.wrapper-spinner {
+  display: flex;
+  height: 100%;
+}
+
+.loader {
+  color: var(--color-brand-txt-base);
+  display: flex;
+  margin: auto;
+  width: 10rem;
+  height: 10rem;
+}
+</style>

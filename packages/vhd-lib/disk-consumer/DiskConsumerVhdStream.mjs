@@ -1,0 +1,99 @@
+import { Readable } from 'stream'
+import { BaseVhd, FULL_BLOCK_BITMAP } from './BaseVhd.mjs'
+import { DEFAULT_BLOCK_SIZE } from '../_constants.js'
+import { unpackFooter, unpackHeader } from 'vhd-lib/Vhd/_utils.js'
+import { fuFooter, fuHeader, checksumStruct } from 'vhd-lib/_structs.js'
+import assert from 'node:assert'
+import { isCompressedBlock } from './compressedBlock.mjs'
+
+/**
+ * @typedef {Readable & { length: number }} VhdStream
+ */
+
+/**
+ * @typedef {Object} VhdStreamTarget
+ * @property {Buffer?} uuid
+ * @property {Buffer?} parentUuid
+ * @property {string?} parentPath
+ */
+
+/**
+ * @extends {BaseVhd}
+ */
+export class DiskConsumerVhdStream extends BaseVhd {
+  /** @type {VhdStreamTarget} */
+  #target
+
+  /**
+   * @param {import('@xen-orchestra/disk-transform').Disk} source
+   * @param {VhdStreamTarget} [target]
+   */
+  constructor(source, target = {}) {
+    super(source)
+    this.#target = target
+  }
+
+  /**
+   * @param {AbortSignal} [signal]
+   * @returns {VhdStream}
+   */
+  async toStream(signal) {
+    const { uuid, parentUuid, parentPath } = this.#target
+
+    // footer/header are yielded as raw bytes below (no separate writeFooter()/writeHeader()
+    // step to repack them later), so any post-creation change must be repacked here
+    const footerObj = unpackFooter(this.computeVhdFooter())
+    if (uuid) {
+      footerObj.uuid = uuid
+    }
+    const footer = fuFooter.pack(footerObj)
+    checksumStruct(footer, fuFooter)
+
+    const headerObj = unpackHeader(this.computeVhdHeader())
+    if (parentUuid) {
+      headerObj.parentUuid = parentUuid
+    }
+    if (parentPath) {
+      headerObj.parentUnicodeName = parentPath
+    }
+    const header = fuHeader.pack(headerObj)
+    checksumStruct(header, fuHeader)
+
+    const { bat, fileSize } = this.computeVhdBatAndFileSize() // the bat contains the calculated position of the futures blocks
+    const uid = 'to stream ' + Math.random()
+    const blockGenerator = this.source.diskBlocks(uid)
+    async function* generator() {
+      signal?.throwIfAborted()
+      yield footer
+      yield header
+      yield bat
+      let truncatedBlock = null
+      for await (const block of blockGenerator) {
+        signal?.throwIfAborted()
+        const { data, index } = block
+        assert.ok(!isCompressedBlock(block), `can't write a compressed block ${index} in a VHD file`)
+        // only the last block can be truncated
+        // but the stream expect a full block
+        if (truncatedBlock !== null) {
+          throw new Error(
+            `Expecting a ${DEFAULT_BLOCK_SIZE} bytes block, got a ${truncatedBlock.data.length}, for index ${truncatedBlock.index}`
+          )
+        }
+
+        if (data.length < DEFAULT_BLOCK_SIZE) {
+          truncatedBlock = { data, index }
+        }
+        // bitmap and data are yielded separately: no need to copy the data
+        yield FULL_BLOCK_BITMAP
+        // ensure the blocks are always at full size
+        yield data.length < DEFAULT_BLOCK_SIZE ? Buffer.concat([data], DEFAULT_BLOCK_SIZE) : data
+      }
+      yield footer
+    }
+
+    /** @type {VhdStream} */
+    const stream = Readable.from(generator(), { objectMode: false, highWaterMark: 10 * 1024 * 1024 })
+    stream.length = fileSize
+    return stream
+  }
+}

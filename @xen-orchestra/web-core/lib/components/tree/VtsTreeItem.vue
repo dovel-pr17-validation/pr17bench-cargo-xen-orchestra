@@ -1,0 +1,51 @@
+<template>
+  <div class="vts-tree-item" :data-node-id="nodeId" @click="handleClick()">
+    <slot />
+    <slot v-if="expanded" name="sublist" />
+  </div>
+</template>
+
+<script lang="ts" setup>
+import { useLeftSidebarStore } from '@core/packages/sidebar'
+import type { TreeNodeId } from '@core/packages/tree/types.ts'
+import { useUiStore } from '@core/stores/ui.store.ts'
+import { IK_TREE_ITEM_EXPANDED, IK_TREE_ITEM_HAS_CHILDREN } from '@core/utils/injection-keys.util.ts'
+import { onBeforeMount, onBeforeUpdate, provide, ref, toRef, useSlots } from 'vue'
+
+const props = defineProps<{
+  nodeId?: TreeNodeId
+  expanded?: boolean
+  hasChildren?: boolean
+}>()
+
+defineSlots<{
+  default(): any
+  sublist?(): any
+}>()
+
+const sidebar = useLeftSidebarStore()
+const uiStore = useUiStore()
+const hasChildrenState = ref(false)
+
+const updateHasChildren = () => {
+  if (props.hasChildren !== undefined) {
+    hasChildrenState.value = props.hasChildren
+    return
+  }
+
+  const { sublist } = useSlots()
+  hasChildrenState.value = sublist !== undefined
+}
+
+const handleClick = () => {
+  if (uiStore.isSmall) {
+    sidebar.toggleExpand(false)
+  }
+}
+
+onBeforeMount(() => updateHasChildren())
+onBeforeUpdate(() => updateHasChildren())
+
+provide(IK_TREE_ITEM_HAS_CHILDREN, hasChildrenState)
+provide(IK_TREE_ITEM_EXPANDED, toRef(props, 'expanded'))
+</script>

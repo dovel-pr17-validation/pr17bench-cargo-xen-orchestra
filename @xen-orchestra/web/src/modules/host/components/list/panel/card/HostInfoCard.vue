@@ -1,0 +1,158 @@
+<template>
+  <UiPanelCard class="host-info-card">
+    <UiPanelCardTitle
+      :id="host.id"
+      :icon="hostIcon"
+      :label="host.name_label"
+      :to="{ name: '/host/[id]/dashboard', params: { id: host.id } }"
+      size="medium"
+    />
+    <VtsCardRowList class="content">
+      <VtsCardRowKeyValue>
+        <template #key>{{ t('state') }}</template>
+        <template #value>
+          <span class="value">
+            <VtsIcon :name="hostStateDisplay.icon" size="medium" />
+            {{ hostStateDisplay.text }}
+          </span>
+        </template>
+      </VtsCardRowKeyValue>
+      <VtsCardRowKeyValue align-top truncate>
+        <template #key>{{ t('description') }}</template>
+        <template #value>{{ host.name_description }}</template>
+        <template v-if="host.name_description" #addons>
+          <VtsCopyButton :value="host.name_description" />
+        </template>
+      </VtsCardRowKeyValue>
+      <VtsCardRowKeyValue align-top>
+        <template #key>{{ t('tags') }}</template>
+        <template #value>
+          <UiTagsList v-if="host.tags.length > 0">
+            <VtsTag v-for="tag in host.tags" :key="tag" :value="tag" />
+          </UiTagsList>
+        </template>
+        <template v-if="host.tags.length > 0" #addons>
+          <VtsCopyButton :value="host.tags.join(', ')" />
+        </template>
+      </VtsCardRowKeyValue>
+      <VtsCardRowKeyValue>
+        <template #key>{{ t('status') }}</template>
+        <template #value>
+          <VtsEnabledState :enabled="host.enabled" />
+        </template>
+      </VtsCardRowKeyValue>
+      <VtsCardRowKeyValue>
+        <template #key>{{ t('pool') }}</template>
+        <template #value>
+          <div v-if="pool" class="value">
+            <UiLink :to="{ name: '/pool/[id]/dashboard', params: { id: pool.id } }" icon="object:pool" size="small">
+              {{ pool.name_label }}
+            </UiLink>
+          </div>
+        </template>
+        <template v-if="pool" #addons>
+          <VtsCopyButton :value="pool.id" />
+        </template>
+      </VtsCardRowKeyValue>
+      <VtsCardRowKeyValue>
+        <template #key>{{ t('master') }}</template>
+        <template #value>
+          <div v-if="isMaster" class="value">
+            <VtsIcon v-tooltip="t('master')" name="status:primary-circle" size="medium" />
+            {{ t('this-host') }}
+          </div>
+          <div v-else-if="masterHost !== undefined" class="value">
+            <HostLink :host="masterHost" size="small" />
+          </div>
+        </template>
+        <template v-if="masterHost !== undefined" #addons>
+          <VtsCopyButton :value="masterHost.id" />
+        </template>
+      </VtsCardRowKeyValue>
+      <VtsCardRowKeyValue>
+        <template #key>{{ t('started') }}</template>
+        <template #value>{{ relativeStartTime }}</template>
+        <template v-if="relativeStartTime" #addons>
+          <VtsCopyButton :value="relativeStartTime" />
+        </template>
+      </VtsCardRowKeyValue>
+      <VtsCardRowKeyValue>
+        <template #key>{{ t('patches') }}</template>
+        <template v-if="noMissingPatches" #value>
+          <UiInfo accent="success">{{ t('patches-up-to-date') }}</UiInfo>
+        </template>
+        <template v-else #value>
+          <UiInfo accent="warning">{{ t('n-missing', nMissingPatches) }}</UiInfo>
+        </template>
+        <template #addons>
+          <VtsCopyButton :value="noMissingPatches ? t('patches-up-to-date') : t('n-missing', nMissingPatches)" />
+        </template>
+      </VtsCardRowKeyValue>
+    </VtsCardRowList>
+  </UiPanelCard>
+</template>
+
+<script lang="ts" setup>
+import HostLink from '@/modules/host/components/HostLink.vue'
+import { useXoHostUtils } from '@/modules/host/composables/xo-host-utils.composable.ts'
+import { type FrontXoHost, useXoHostCollection } from '@/modules/host/remote-resources/use-xo-host-collection.ts'
+import { useXoHostMissingPatchesCollection } from '@/modules/host/remote-resources/use-xo-host-missing-patches-collection.ts'
+import { getHostIcon, getHostState } from '@/modules/host/utils/xo-host.util.ts'
+import { useXoPoolCollection } from '@/modules/pool/remote-resources/use-xo-pool-collection.ts'
+import VtsCardRowKeyValue from '@core/components/card/VtsCardRowKeyValue.vue'
+import VtsCardRowList from '@core/components/card/VtsCardRowList.vue'
+import VtsCopyButton from '@core/components/copy-button/VtsCopyButton.vue'
+import VtsEnabledState from '@core/components/enabled-state/VtsEnabledState.vue'
+import VtsIcon from '@core/components/icon/VtsIcon.vue'
+import VtsTag from '@core/components/tag/VtsTag.vue'
+import UiInfo from '@core/components/ui/info/UiInfo.vue'
+import UiLink from '@core/components/ui/link/UiLink.vue'
+import UiPanelCard from '@core/components/ui/panel-card/UiPanelCard.vue'
+import UiPanelCardTitle from '@core/components/ui/panel-card-title/UiPanelCardTitle.vue'
+import UiTagsList from '@core/components/ui/tag/UiTagsList.vue'
+import { vTooltip } from '@core/directives/tooltip.directive.ts'
+import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
+
+const { host } = defineProps<{
+  host: FrontXoHost
+}>()
+
+const { t } = useI18n()
+
+const { getHostStateDisplay, relativeStartTime } = useXoHostUtils(() => host)
+
+const { useGetPoolById } = useXoPoolCollection()
+
+const { getMasterHostByPoolId, isMasterHost } = useXoHostCollection()
+
+const { hostMissingPatches: missingPatches } = useXoHostMissingPatchesCollection({}, () => host.id)
+
+const pool = useGetPoolById(() => host.$pool)
+
+const isMaster = computed(() => isMasterHost(host.id))
+
+const masterHost = computed(() => getMasterHostByPoolId(host.$pool))
+
+const nMissingPatches = computed(() => missingPatches.value.length)
+
+const noMissingPatches = computed(() => nMissingPatches.value === 0)
+
+const hostState = computed(() => getHostState(host))
+
+const hostStateDisplay = computed(() => getHostStateDisplay(hostState.value))
+
+const hostIcon = computed(() => getHostIcon(host))
+</script>
+
+<style lang="postcss" scoped>
+.host-info-card {
+  .content {
+    .value {
+      display: flex;
+      align-items: center;
+      gap: 0.8rem;
+    }
+  }
+}
+</style>
